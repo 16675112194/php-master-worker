@@ -15,7 +15,7 @@ abstract class MasterWorker
     protected $consumeTryTimes; // 连续消费失败次数
 
     // 父进程专用属性
-    protected $child_list = [];
+    protected $worker_list = [];
     protected $check_internal = 1;
 
     // 子进程专用属性
@@ -45,8 +45,8 @@ abstract class MasterWorker
             'logFile' => './producter_consumer.log',
         ];
 
-        foreach ($defaultConfig as $key => $value) {
-            $this->$key = $this->arrayGet($options, $key, $value);
+        foreach ($defaultConfig as $key => $default) {
+            $this->$key = array_key_exists($key, $options) ? $options[$key] : $default;
         }
     }
 
@@ -57,7 +57,7 @@ abstract class MasterWorker
         set_exception_handler([$this, 'exceptionHandler']);
 
         // fork minWorkerNum 个子进程
-        $this->mutiForkChild($this->minWorkerNum);
+        $this->mutiForkWorker($this->minWorkerNum);
 
         if ($this->getWorkerLength() <= 0) {
             die('fork 子进程全部失败');
@@ -95,10 +95,10 @@ abstract class MasterWorker
         }
     }
 
-    protected function mutiForkChild($num, $autoQuit = false, $maxTryTimes = 3)
+    protected function mutiForkWorker($num, $autoQuit = false, $maxTryTimes = 3)
     {
         for ($i = 1; $i <= $num; ++$i) {
-            $this->forkChild($autoQuit, $maxTryTimes);
+            $this->forkWorker($autoQuit, $maxTryTimes);
         }
     }
 
@@ -113,7 +113,7 @@ abstract class MasterWorker
             $workerLength = $this->getWorkerLength();
 
             // 如果进程数小于最低进程数
-            $this->mutiForkChild($this->minWorkerNum - $workerLength);
+            $this->mutiForkWorker($this->minWorkerNum - $workerLength);
 
             $workerLength = $this->getWorkerLength();
 
@@ -132,14 +132,14 @@ abstract class MasterWorker
             $num = min($num, $this->maxWorkerNum - $workerLength);
 
             // 新建进程，空闲自动退出
-            $this->mutiForkChild($num, true);
+            $this->mutiForkWorker($num, true);
 
         }
     }
 
     protected function getWorkerLength()
     {
-        return count($this->child_list);
+        return count($this->worker_list);
     }
 
     //信号处理函数
@@ -155,7 +155,7 @@ abstract class MasterWorker
                 $this->stop_service = true;
 
                 // 给子进程发送信号
-                foreach ($this->child_list as $pid => $v) {
+                foreach ($this->worker_list as $pid => $v) {
                     posix_kill($pid, SIGTERM);
                 }
 
@@ -164,7 +164,7 @@ abstract class MasterWorker
                 // 子进程退出, 回收子进程, 并且判断程序是否需要退出
                 while (($pid = pcntl_waitpid(-1, $status, WNOHANG)) > 0) {
                     // 去除子进程
-                    unset($this->child_list[$pid]);
+                    unset($this->worker_list[$pid]);
 
                     // 子进程是否正常退出
                     // if (pcntl_wifexited($status)) {
@@ -189,13 +189,13 @@ abstract class MasterWorker
 
     protected function checkExit()
     {
-        if ($this->stop_service && empty($this->child_list)) {
+        if ($this->stop_service && empty($this->worker_list)) {
             $this->masterBeforeExit();
             die('父进程结束');
         }
     }
 
-    protected function forkChild($autoQuit = false, $maxTryTimes = 3)
+    protected function forkWorker($autoQuit = false, $maxTryTimes = 3)
     {
 
         $times = 1;
@@ -207,7 +207,7 @@ abstract class MasterWorker
             if ($pid == -1) {
                 ++$times;
             } elseif($pid) {
-                $this->child_list[$pid] = true;
+                $this->worker_list[$pid] = true;
                 //echo 'pid:', $pid, "\n";
                 return $pid;
             } else {
@@ -356,11 +356,6 @@ abstract class MasterWorker
     public function isMaster()
     {
         return $this->master;
-    }
-
-    protected function arrayGet($array, $key, $default = null)
-    {
-        return array_key_exists($key, $array) ? $array[$key] : $default;
     }
 
     /**
