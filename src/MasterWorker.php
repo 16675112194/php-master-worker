@@ -60,7 +60,7 @@ abstract class MasterWorker
         $this->mutiForkWorker($this->minWorkerNum);
 
         if ($this->getWorkerLength() <= 0) {
-            die('fork 子进程全部失败');
+            $this->masterWaitExit(true, 'fork 子进程全部失败');
         }
 
         $this->master = true;
@@ -77,11 +77,21 @@ abstract class MasterWorker
         $this->masterWaitExit();
     }
 
-    protected function masterWaitExit()
+    /**
+     * Master 等待退出
+     *
+     * @param boolean $force 强制退出
+     * @param string $msg 退出 message
+     * @return void
+     */
+    protected function masterWaitExit($force = false, $msg = '')
     {
+        // 强制发送退出信号
+        $force && $this->sig_handler(SIGQUIT);
+
         // 等到子进程退出
         while ($this->stop_service) {
-            $this->checkExit();
+            $this->checkExit($msg);
             $this->msleep($this->check_internal);
         }
     }
@@ -187,11 +197,11 @@ abstract class MasterWorker
         $this->stop_service = true;
     }
 
-    protected function checkExit()
+    protected function checkExit($msg = '')
     {
         if ($this->stop_service && empty($this->worker_list)) {
             $this->masterBeforeExit();
-            die('父进程结束');
+            die($msg ?:'父进程结束');
         }
     }
 
@@ -341,9 +351,9 @@ abstract class MasterWorker
     public function exceptionHandler($exception)
     {
         if ($this->isMaster()) {
-            $this->log('父进程['.posix_getpid().']错误退出中:' . $exception->getMessage());
-            $this->sig_handler(SIGQUIT);
-            $this->masterWaitExit();
+            $msg = '父进程['.posix_getpid().']错误退出中:' . $exception->getMessage();
+            $this->log($msg);
+            $this->masterWaitExit(true, $msg);
         } else {
             $this->child_sig_handler(SIGQUIT);
         }
