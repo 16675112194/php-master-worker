@@ -281,11 +281,7 @@ abstract class MasterWorker
         // consume 返回false 为失败
         while ($tryTimes <= $this->consumeTryTimes) {
             try {
-                if ($this->consume($data)) {
-                    break; // 执行成功
-                } else {
-                    ++$tryTimes;
-                }
+                $this->consume($data);
             } catch (\Exception $e) {
                 $exception = $e;
                 ++$tryTimes;
@@ -423,7 +419,7 @@ abstract class MasterWorker
      * 消费的具体内容
      * 不要进行失败重试
      * 会自动进行
-     * 如果失败最好直接抛出异常
+     * 如果失败直接抛出异常
      * @param $data
      */
     abstract protected function consume($data);
