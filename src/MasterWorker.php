@@ -228,7 +228,7 @@ abstract class MasterWorker
                 pcntl_signal(SIGTERM, [$this, 'child_sig_handler']);
                 pcntl_signal(SIGINT, [$this, 'child_sig_handler']);
                 pcntl_signal(SIGQUIT, [$this, 'child_sig_handler']);
-                exit($this->runChild()); // 子进程结束
+                exit($this->runChild()); // worker进程结束
             }
         } while ($times <= $maxTryTimes);
 
@@ -255,7 +255,7 @@ abstract class MasterWorker
             try {
                 $data = $this->deQueue();
                 if ($data) {
-                    $noDataLoopTime = 1; // 从新变从1开始
+                    $noDataLoopTime = 1; // 重新从1开始
                     $this->consumeByRetry($data);
                 } else {
                     // 避免溢出
