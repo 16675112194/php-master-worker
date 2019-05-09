@@ -59,13 +59,11 @@ abstract class MasterWorker
         // fork minWorkerNum 个子进程
         $this->mutiForkChild($this->minWorkerNum);
 
-        if (($processLength = $this->getProcessLength()) <= 0) {
+        if ($this->getWorkerLength() <= 0) {
             die('fork 子进程全部失败');
         }
 
         $this->master = true;
-
-        //echo '当前进程数：', $processLength, "\n";
 
         // 父进程监听信号
         pcntl_signal(SIGTERM, [$this, 'sig_handler']);
@@ -74,8 +72,18 @@ abstract class MasterWorker
         pcntl_signal(SIGCHLD, [$this, 'sig_handler']);
 
         // 监听队列，队列比进程数多很多，则扩大进程，扩大部分的进程会空闲自动退出
-
         $this->checkProcessQueueLength();
+
+        $this->masterWaitExit();
+    }
+
+    protected function masterWaitExit()
+    {
+        // 等到子进程退出
+        while ($this->stop_service) {
+            $this->checkExit();
+            $this->msleep($this->check_internal);
+        }
     }
 
     protected function log($msg)
@@ -96,53 +104,40 @@ abstract class MasterWorker
 
     protected function checkProcessQueueLength()
     {
+        // 如果要退出父进程，就不执行检测
         while (! $this->stop_service) {
 
             $this->msleep($this->check_internal);
 
-            //echo '监听队列', "\n";
-            $this->log('监听中..');
-
             // 处理进程
-            $processLength = $this->getProcessLength();
+            $workerLength = $this->getWorkerLength();
 
             // 如果进程数小于最低进程数
-            //echo '进程差额:', $this->minWorkerNum - $processLength, "\n";
-            $this->mutiForkChild($this->minWorkerNum - $processLength);
+            $this->mutiForkChild($this->minWorkerNum - $workerLength);
 
-            $processLength = $this->getProcessLength();
+            $workerLength = $this->getWorkerLength();
 
-            if ($processLength <= 0) {
+            if ($workerLength <= 0) {
                 die('创建子进程失败');
             }
             
-            if ($processLength >= $this->maxWorkerNum) {
+            if ($workerLength >= $this->maxWorkerNum) {
                 // 不需要增加进程
                 continue;
             }
 
-            // 简单的算法来增加
-            $queueLength = $this->getQueueLength();
+            $num = $this->calculateAddWorkerNum();
 
-            // 还不够多
-            if (($queueLength / $processLength < 3) && ($queueLength - $processLength < 10)) {
-                continue;
-            }
-
-            // 增加一定数量的进程
-            $num = ceil(($this->maxWorkerNum - $this->processLength ) / 2);
+            // 不允许超过最大进程数
+            $num = min($num, $this->maxWorkerNum - $workerLength);
 
             // 新建进程，空闲自动退出
             $this->mutiForkChild($num, true);
-            //echo '新增进程：', $num, "\n";
+
         }
-
-        //echo '退出监听队列', "\n";
-
-        $this->checkExit();
     }
 
-    protected function getProcessLength()
+    protected function getWorkerLength()
     {
         return count($this->child_list);
     }
@@ -150,8 +145,6 @@ abstract class MasterWorker
     //信号处理函数
     public function sig_handler($sig)
     {
-
-        $this->log("接受信号处理：" . $sig);
         switch ($sig) {
             case SIGTERM:
             case SIGINT:
@@ -166,7 +159,6 @@ abstract class MasterWorker
                     posix_kill($pid, SIGTERM);
                 }
 
-                var_dump($this->child_list);
                 break;
             case SIGCHLD:
                 // 子进程退出, 回收子进程, 并且判断程序是否需要退出
@@ -175,13 +167,16 @@ abstract class MasterWorker
                     unset($this->child_list[$pid]);
 
                     // 子进程是否正常退出
-                    if (pcntl_wifexited($status)) {
-                        //
-                    }
+                    // if (pcntl_wifexited($status)) {
+                    //     //
+                    // }
                 }
 
                 $this->checkExit();
 
+                break;
+            default:
+                $this->default_sig_handler($sig);
                 break;
         }
 
@@ -195,6 +190,7 @@ abstract class MasterWorker
     protected function checkExit()
     {
         if ($this->stop_service && empty($this->child_list)) {
+            $this->masterBeforeExit();
             die('父进程结束');
         }
     }
@@ -230,11 +226,6 @@ abstract class MasterWorker
         return false;
 
     }
-
-    /**
-     * 得到队列长度
-     */
-    abstract protected function getQueueLength();
 
     /**
      * 子进程处理内容
@@ -273,7 +264,7 @@ abstract class MasterWorker
             }
         }
 
-        $this->childbeforeExit();
+        $this->workerBeforeExit();
 
         return $status;
     }
@@ -305,35 +296,6 @@ abstract class MasterWorker
             throw $exception;
         }
     }
-
-    /**
-     * 出队
-     * @return mixed
-     */
-    abstract public function deQueue();
-
-    /**
-     * 入队
-     * @param $data
-     * @return int
-     */
-    abstract public function enQueue($data);
-
-    /**
-     * 消费的具体内容
-     * 不要进行失败重试
-     * 会自动进行
-     * 如果失败最好直接抛出异常
-     * @param $data
-     */
-    abstract protected function consume($data);
-
-    /**
-     * 子进程结束回调
-     *
-     * @return void
-     */
-    abstract protected function childbeforeExit();
 
     /**
      * @param $mixed
@@ -375,13 +337,6 @@ abstract class MasterWorker
         return true;
     }
 
-    protected function closeRedis()
-    {
-        $this->redis && $this->redis->close();
-        $this->redis = null;
-        $this->log('redis 关闭');
-    }
-
     protected function msleep($time)
     {
         usleep($time * 1000000);
@@ -392,6 +347,7 @@ abstract class MasterWorker
         if ($this->isMaster()) {
             $this->log('父进程['.posix_getpid().']错误退出中:' . $exception->getMessage());
             $this->sig_handler(SIGQUIT);
+            $this->masterWaitExit();
         } else {
             $this->child_sig_handler(SIGQUIT);
         }
@@ -406,6 +362,76 @@ abstract class MasterWorker
     {
         return array_key_exists($key, $array) ? $array[$key] : $default;
     }
+
+    /**
+     * 默认的 worker 数量增加处理
+     * 
+     * @return int
+     */
+    public function calculateAddWorkerNum()
+    {
+        $workerLength = $this->getWorkerLength();
+        $taskLength = $this->getTaskLength();
+        // 还不够多
+        if (($taskLength / $workerLength < 3) && ($taskLength - $workerLength < 10)) {
+            return 0;
+        }
+
+        // 增加一定数量的进程
+        return ceil($this->maxWorkerNum - $workerLength / 2);
+    }
+
+    protected function default_sig_handler($sig)
+    {
+
+    }
+
+    /**
+     * 子进程结束回调
+     *
+     * @return void
+     */
+     protected function workerBeforeExit()
+     {
+
+     }
+
+     /**
+     * 父进程结束回调
+     *
+     * @return void
+     */
+    protected function masterBeforeExit()
+    {
+
+    }
+
+    /**
+     * 得到待处理任务数量
+     */
+    abstract protected function getTaskLength();
+
+    /**
+     * 出队
+     * @return mixed
+     */
+    abstract public function deQueue();
+
+    /**
+     * 入队
+     * @param $data
+     * @return int
+     */
+    abstract public function enQueue($data);
+
+    /**
+     * 消费的具体内容
+     * 不要进行失败重试
+     * 会自动进行
+     * 如果失败最好直接抛出异常
+     * @param $data
+     */
+    abstract protected function consume($data);
 }
 
 // set_error_handler

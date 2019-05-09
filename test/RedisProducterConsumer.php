@@ -14,17 +14,17 @@ class RedisProducterConsumer extends MasterWorker
      */
     protected $redis = null;
 
-    protected function childbeforeExit()
+    protected function workerBeforeExit()
     {
+        $this->closeRedis();
         // 处理结束，把redis关闭
         $this->log('进程退出：' . posix_getpid());
-        $this->closeRedis();
     }
 
     /**
      * 得到队列长度
      */
-    protected function getQueueLength()
+    protected function getTaskLength()
     {
         return $this->getRedis()->lLen(static::QUERY_NAME);
     }
@@ -80,5 +80,10 @@ class RedisProducterConsumer extends MasterWorker
         $this->redis && $this->redis->close();
         $this->redis = null;
         $this->log('redis 关闭');
+    }
+
+    protected function masterBeforeExit()
+    {
+        $this->log('master 进程退出：' . posix_getpid());
     }
 }
