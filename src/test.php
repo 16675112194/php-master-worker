@@ -1,6 +1,6 @@
 <?php
 
-require "./RedisConsumer.class.php";
+require "./RedisProductConsumer.php";
 
-$consumer = new RedisConsumer();
+$consumer = new RedisProductConsumer();
 $consumer->start();
