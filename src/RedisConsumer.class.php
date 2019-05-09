@@ -18,6 +18,7 @@ class RedisConsumer
     protected $waitQueryTime = 0.01; // 等待100毫米
     protected $subProcessMaxLoopTimes = 50; // 连续这么多次队列为空就退出子进程
     protected $consumeTryTimes = 3; // 消费3次失败就放弃
+    protected $master = false;
 
     // 子进程没事做则自动退出
     protected $autoQuit = false;
@@ -47,6 +48,8 @@ class RedisConsumer
             die('fork 子进程全部失败');
         }
 
+        $this->master = true;
+
         echo '当前进程数：', $processLength, "\n";
 
         // 父进程监听信号
@@ -58,7 +61,6 @@ class RedisConsumer
         // 监听队列，队列比进程数多很多，则扩大进程，扩大部分的进程会空闲自动退出
 
         $this->checkProcessQueueLength();
-
     }
 
     protected function log($msg)
@@ -81,22 +83,43 @@ class RedisConsumer
     {
         while (! $this->stop_service) {
 
+            $this->msleep($this->check_internal);
+
             echo '监听队列', "\n";
             $this->log('监听中..');
 
-            // 如果进程数小于最低进程数
-            echo '进程差额:', $this->minProcessNum - $this->getProcessLength(), "\n";
-            $this->mutiForkChild($this->minProcessNum - $this->getProcessLength());
-            
             // 处理进程
-            $queueLength = $this->getQueueLength();
             $processLength = $this->getProcessLength();
-            $processLength = $processLength <= 0 ? 1 : $processLength; // 避免出现0的情况
 
-            
+            // 如果进程数小于最低进程数
+            echo '进程差额:', $this->minProcessNum - $processLength, "\n";
+            $this->mutiForkChild($this->minProcessNum - $processLength);
 
+            $processLength = $this->getProcessLength();
+
+            if ($processLength <= 0) {
+                die('创建子进程失败');
+            }
             
-            $this->msleep($this->check_internal);
+            if ($processLength >= $this->maxProcessNum) {
+                // 不需要增加进程
+                continue;
+            }
+
+            // 简单的算法来增加
+            $queueLength = $this->getQueueLength();
+
+            // 还不够多
+            if (($queueLength / $processLength < 3) && ($queueLength - $processLength < 10)) {
+                continue;
+            }
+
+            // 增加一定数量的进程
+            $num = ceil(($this->maxProcessNum - $this->processLength ) / 2);
+
+            // 新建进程，空闲自动退出
+            $this->mutiForkChild($num, true);
+            echo '新增进程：', $num, "\n";
         }
 
         echo '退出监听队列', "\n";
@@ -212,7 +235,6 @@ class RedisConsumer
 
             // 处理退出
             if ($this->stop_service) {
-                $this->log('进程退出：' . posix_getpid());
                 break;
             }
 
@@ -227,16 +249,16 @@ class RedisConsumer
                     $this->msleep($this->waitQueryTime);
                 }
             } catch (\RedisException $e) {
-                $this->getRedis(true);
+                //$this->getRedis(true);
                 $this->log(['query' => $data, 'status' => $e->getCode(), 'errorMsg' => 'RedisException: ' . $e->getMessage()]);
             } catch (\Exception $e) {
                 // 消费出现错误
-
                 $this->log(['query' => $data, 'status' => $e->getCode(), 'errorMsg' => $e->getMessage()]);
             }
         }
 
         // 处理结束，把redis关闭
+        $this->log('进程退出：' . posix_getpid());
         $this->closeRedis();
     }
 
@@ -373,6 +395,7 @@ class RedisConsumer
     {
         $this->redis && $this->redis->close();
         $this->redis = null;
+        $this->log('redis 关闭');
     }
 
     protected function msleep($time)
@@ -382,8 +405,17 @@ class RedisConsumer
 
     public function exceptionHandler($exception)
     {
-        $this->log('父进程['.posix_getpid().']错误退出中:' . $exception->getMessage());
-        $this->sig_handler(SIGQUIT);
+        if ($this->isMaster()) {
+            $this->log('父进程['.posix_getpid().']错误退出中:' . $exception->getMessage());
+            $this->sig_handler(SIGQUIT);
+        } else {
+            $this->child_sig_handler(SIGQUIT);
+        }
+    }
+
+    public function isMaster()
+    {
+        return $this->master;
     }
 }
 
