@@ -127,8 +127,9 @@ abstract class MasterWorker
 
             $workerLength = $this->getWorkerLength();
 
+            // 创建常驻worker进程失败, 下次检查继续尝试创建
             if ($workerLength <= 0) {
-                die('创建子进程失败');
+                continue;
             }
             
             if ($workerLength >= $this->maxWorkerNum) {
@@ -141,7 +142,7 @@ abstract class MasterWorker
             // 不允许超过最大进程数
             $num = min($num, $this->maxWorkerNum - $workerLength);
 
-            // 新建进程，空闲自动退出
+            // 创建空闲自动退出worker进程
             $this->mutiForkWorker($num, true);
 
         }
