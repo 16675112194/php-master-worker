@@ -20,7 +20,8 @@ abstract class MasterWorker
 
     // 子进程专用属性
     protected $autoQuit = false;
-    protected $status = 'idle';
+    protected $status = self::WORKER_STATUS_IDLE;
+    protected $taskData; // 任务数据
 
     // 通用属性
     protected $stop_service = false;
@@ -28,6 +29,13 @@ abstract class MasterWorker
 
     // 通用配置
     protected $logFile;
+
+    const WORKER_STATUS_IDLE = 'idle';
+    const WORKER_STATUS_FINISHED = 'finished';
+    const WORKER_STATUS_EXITING = 'exiting';
+    const WORKER_STATUS_WORKING = 'working';
+    const WORKER_STATUS_FAIL = 'fail';
+    const WORKER_STATUS_TERMINATED = 'terminated';
 
 
     public function __construct($options = [])
@@ -71,7 +79,7 @@ abstract class MasterWorker
         pcntl_signal(SIGCHLD, [$this, 'sig_handler']);
 
         // 监听队列，队列比进程数多很多，则扩大进程，扩大部分的进程会空闲自动退出
-        $this->checkProcessQueueLength();
+        $this->checkWorkerLength();
 
         $this->masterWaitExit();
     }
@@ -113,7 +121,7 @@ abstract class MasterWorker
         }
     }
 
-    protected function checkProcessQueueLength()
+    protected function checkWorkerLength()
     {
         // 如果要退出父进程，就不执行检测
         while (! $this->stop_service) {
@@ -199,14 +207,18 @@ abstract class MasterWorker
         switch ($sig) {
             case SIGINT:
             case SIGQUIT:
-                $this->stop_service = true;
-                break;
             case SIGTERM:
-                // 强制退出
                 $this->stop_service = true;
-                $this->workerBeforeExit();
-                die(1);
                 break;
+            // 操作比较危险 在处理任务当初强制终止
+            // case SIGTERM:
+            //     // 强制退出
+            //     $this->stop_service = true;
+            //     $this->status = self::WORKER_STATUS_TERMINATED;
+            //     $this->workerBeforeExit();
+            //     $this->status = self::WORKER_STATUS_EXITING;
+            //     die(1);
+            //     break;
         }
     }
 
@@ -265,16 +277,16 @@ abstract class MasterWorker
                 break;
             }
 
-            $data = null;
+            $this->taskData = null;
             try {
-                $data = $this->deQueue();
-                if ($data) {
+                $this->taskData = $this->deQueue();
+                if ($this->taskData) {
                     $noDataLoopTime = 1; // 重新从1开始
-                    $this->status = 'working';
-                    $this->consumeByRetry($data);
-                    $this->status = 'finished';
+                    $this->status = self::WORKER_STATUS_WORKING;
+                    $this->consumeByRetry($this->taskData);
+                    $this->status = self::WORKER_STATUS_FINISHED;
                 } else {
-                    $this->status = 'idle';
+                    $this->status = self::WORKER_STATUS_IDLE;
                     // 避免溢出
                     $noDataLoopTime = $noDataLoopTime >= PHP_INT_MAX ? PHP_INT_MAX : ($noDataLoopTime + 1);
                     // 等待队列
@@ -283,17 +295,19 @@ abstract class MasterWorker
 
                 $status = 0;
             } catch (\RedisException $e) {
-                $this->consumeFail($data, $e);
+                $this->status = self::WORKER_STATUS_FAIL;
+                $this->consumeFail($this->taskData, $e);
                 $status = 1;
             } catch (\Exception $e) {
                 // 消费出现错误
-                $this->consumeFail($data, $e);
+                $this->status = self::WORKER_STATUS_FAIL;
+                $this->consumeFail($this->taskData, $e);
                 $status = 2;
             }
         }
 
-        $this->status = 'exiting';
         $this->workerBeforeExit();
+        $this->status = self::WORKER_STATUS_EXITING;
 
         return $status;
     }
