@@ -106,7 +106,6 @@ abstract class MasterWorker
     protected function log($msg)
     {
         try {
-            // [1] 表示常驻 [0] 表示空闲自动退出
             $header = $this->isMaster() ? 'Master [permanent]' : sprintf('Worker [%s]', $this->autoQuit ? 'temporary' : 'permanent');
             $this->writeLog($msg, $this->getLogFile(), $header);
         } catch (\Exception $e) {
