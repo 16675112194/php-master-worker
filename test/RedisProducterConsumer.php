@@ -26,7 +26,7 @@ class RedisProducterConsumer extends MasterWorker
      */
     protected function getTaskLength()
     {
-        return $this->getRedis()->lLen(static::QUERY_NAME);
+        return $this->getRedis()->lSize(static::QUERY_NAME);
     }
 
     /**
@@ -58,14 +58,20 @@ class RedisProducterConsumer extends MasterWorker
     protected function consume($data)
     {
         // 错误抛出异常
-        //throw new Exception('error:' . $data);
-        $this->log(['consume' => $data]);
+        //throw new Exception('错误信息');
+
+        $this->log('消费中:' . $data);
+
+        $this->msleep(1);
+
+        $this->log('消费结束:' . $data . '; 剩余个数:' . $this->getTaskLength());
+
     }
 
     /**
      * @return Redis
      */
-    protected function getRedis($force = false)
+    public function getRedis($force = false)
     {
 
         // 后续使用 predis 使用redis池
@@ -87,5 +93,12 @@ class RedisProducterConsumer extends MasterWorker
     protected function masterBeforeExit()
     {
         $this->log('master 进程退出：' . posix_getpid());
+    }
+
+    protected function consumeFail($data, \Exception $e)
+    {
+        parent::consumeFail($data, $e);
+
+        // 自定义操作,比如重新入队，上报错误等
     }
 }

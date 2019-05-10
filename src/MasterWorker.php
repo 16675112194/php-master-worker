@@ -20,10 +20,11 @@ abstract class MasterWorker
 
     // 子进程专用属性
     protected $autoQuit = false;
+    protected $status = 'idle';
 
     // 通用属性
     protected $stop_service = false;
-    protected $master = false;
+    protected $master = true;
 
     // 通用配置
     protected $logFile;
@@ -42,7 +43,7 @@ abstract class MasterWorker
             'waitTaskTime' => 0.01,
             'waitTaskLoopTimes' => 50,
             'consumeTryTimes' => 3,
-            'logFile' => './producter_consumer.log',
+            'logFile' => './master_worker.log',
         ];
 
         foreach ($defaultConfig as $key => $default) {
@@ -62,8 +63,6 @@ abstract class MasterWorker
         if ($this->getWorkerLength() <= 0) {
             $this->masterWaitExit(true, 'fork 子进程全部失败');
         }
-
-        $this->master = true;
 
         // 父进程监听信号
         pcntl_signal(SIGTERM, [$this, 'sig_handler']);
@@ -87,7 +86,7 @@ abstract class MasterWorker
     protected function masterWaitExit($force = false, $msg = '')
     {
         // 强制发送退出信号
-        $force && $this->sig_handler(SIGQUIT);
+        $force && $this->sig_handler(SIGTERM);
 
         // 等到子进程退出
         while ($this->stop_service) {
@@ -99,7 +98,9 @@ abstract class MasterWorker
     protected function log($msg)
     {
         try {
-            $this->writeLog($msg, $this->logFile, $this->isMaster() ? 'Master' : 'Worker');
+            // [1] 表示常驻 [0] 表示空闲自动退出
+            $header = $this->isMaster() ? 'Master [permanent]' : sprintf('Worker [%s]', $this->autoQuit ? 'temporary' : 'permanent');
+            $this->writeLog($msg, $this->getLogFile(), $header);
         } catch (\Exception $e) {
             
         }
@@ -195,14 +196,25 @@ abstract class MasterWorker
 
     public function child_sig_handler($sig)
     {
-        $this->stop_service = true;
+        switch ($sig) {
+            case SIGINT:
+            case SIGQUIT:
+                $this->stop_service = true;
+                break;
+            case SIGTERM:
+                // 强制退出
+                $this->stop_service = true;
+                $this->workerBeforeExit();
+                die(1);
+                break;
+        }
     }
 
     protected function checkExit($msg = '')
     {
         if ($this->stop_service && empty($this->worker_list)) {
             $this->masterBeforeExit();
-            die($msg ?:'父进程结束');
+            die($msg ?:'Master 进程结束, Worker 进程全部退出');
         }
     }
 
@@ -224,6 +236,7 @@ abstract class MasterWorker
             } else {
                 // 子进程 消费
                 $this->autoQuit = $autoQuit;
+                $this->master = false;
                 // 处理信号
                 pcntl_signal(SIGTERM, [$this, 'child_sig_handler']);
                 pcntl_signal(SIGINT, [$this, 'child_sig_handler']);
@@ -252,12 +265,16 @@ abstract class MasterWorker
                 break;
             }
 
+            $data = null;
             try {
                 $data = $this->deQueue();
                 if ($data) {
                     $noDataLoopTime = 1; // 重新从1开始
+                    $this->status = 'working';
                     $this->consumeByRetry($data);
+                    $this->status = 'finished';
                 } else {
+                    $this->status = 'idle';
                     // 避免溢出
                     $noDataLoopTime = $noDataLoopTime >= PHP_INT_MAX ? PHP_INT_MAX : ($noDataLoopTime + 1);
                     // 等待队列
@@ -266,15 +283,16 @@ abstract class MasterWorker
 
                 $status = 0;
             } catch (\RedisException $e) {
-                $this->log(['data' => $data, 'status' => $e->getCode(), 'errorMsg' => 'RedisException: ' . $e->getMessage()]);
+                $this->consumeFail($data, $e);
                 $status = 1;
             } catch (\Exception $e) {
                 // 消费出现错误
-                $this->log(['data' => $data, 'status' => $e->getCode(), 'errorMsg' => $e->getMessage()]);
+                $this->consumeFail($data, $e);
                 $status = 2;
             }
         }
 
+        $this->status = 'exiting';
         $this->workerBeforeExit();
 
         return $status;
@@ -292,7 +310,7 @@ abstract class MasterWorker
         // consume 返回false 为失败
         while ($tryTimes <= $this->consumeTryTimes) {
             try {
-                $this->consume($data);
+                return $this->consume($data);
             } catch (\Exception $e) {
                 $exception = $e;
                 ++$tryTimes;
@@ -356,7 +374,7 @@ abstract class MasterWorker
             $this->log($msg);
             $this->masterWaitExit(true, $msg);
         } else {
-            $this->child_sig_handler(SIGQUIT);
+            $this->child_sig_handler(SIGTERM);
         }
     }
 
@@ -381,6 +399,28 @@ abstract class MasterWorker
 
         // 增加一定数量的进程
         return ceil($this->maxWorkerNum - $workerLength / 2);
+    }
+
+    /**
+     * 自定义日子文件
+     *
+     * @return string
+     */
+    protected function getLogFile()
+    {
+        return $this->logFile;
+    }
+
+    /**
+     * 自定义消费错误函数
+     *
+     * @param [type] $data
+     * @param \Exception $e
+     * @return void
+     */
+    protected function consumeFail($data, \Exception $e)
+    {
+        $this->log(['data' => $data, 'errorCode' => $e->getCode(), 'errorMsg' => get_class($e) . ' : ' . $e->getMessage()]);
     }
 
     protected function default_sig_handler($sig)
