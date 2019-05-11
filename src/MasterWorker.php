@@ -17,11 +17,13 @@ abstract class MasterWorker
     // 父进程专用属性
     protected $worker_list = [];
     protected $check_internal = 1;
+    protected $masterExitCallback = [];
 
     // 子进程专用属性
     protected $autoQuit = false;
     protected $status = self::WORKER_STATUS_IDLE;
     protected $taskData; // 任务数据
+    protected $workerExitCallback = [];
 
     // 通用属性
     protected $stop_service = false;
@@ -214,7 +216,7 @@ abstract class MasterWorker
             //     // 强制退出
             //     $this->stop_service = true;
             //     $this->status = self::WORKER_STATUS_TERMINATED;
-            //     $this->workerBeforeExit();
+            //     $this->beforeWorkerExitHandler();
             //     $this->status = self::WORKER_STATUS_EXITING;
             //     die(1);
             //     break;
@@ -224,7 +226,7 @@ abstract class MasterWorker
     protected function checkExit($msg = '')
     {
         if ($this->stop_service && empty($this->worker_list)) {
-            $this->masterBeforeExit();
+            $this->beforeMasterExitHandler();
             die($msg ?:'Master 进程结束, Worker 进程全部退出');
         }
     }
@@ -305,7 +307,7 @@ abstract class MasterWorker
             }
         }
 
-        $this->workerBeforeExit();
+        $this->beforeWorkerExitHandler();
         $this->status = self::WORKER_STATUS_EXITING;
 
         return $status;
@@ -436,27 +438,66 @@ abstract class MasterWorker
         $this->log(['data' => $data, 'errorCode' => $e->getCode(), 'errorMsg' => get_class($e) . ' : ' . $e->getMessage()]);
     }
 
-    protected function default_sig_handler($sig)
-    {
-
-    }
-
-    /**
-     * 子进程结束回调
-     *
-     * @return void
-     */
-     protected function workerBeforeExit()
+     protected function beforeWorkerExitHandler()
      {
-
+         foreach ($this->workerExitCallback as $callback) {
+            is_callable($callback) && call_user_func($callback, $this);
+         }
      }
 
      /**
-     * 父进程结束回调
+      * 设置Worker自定义结束回调
+      *
+      * @param mixed  $func
+      * @param boolean $prepend
+      * @return void
+      */
+     public function setWorkerExitCallback($callback, $prepend = false)
+     {
+        return $this->setCallbackQueue('workerExitCallback', $callback, $prepend);
+     }
+
+     /**
+     * 设置Master自定义结束回调
      *
+     * @param callable $func
+     * @param boolean $prepend
      * @return void
      */
-    protected function masterBeforeExit()
+    public function setMasterExitCallback(callable $callback, $prepend = false)
+    {
+        return $this->setCallbackQueue('masterExitCallback', $callback, $prepend);
+    }
+
+    protected function setCallbackQueue($queueName, $callback, $prepend = false)
+    {
+        if (! isset($this->$queueName) || ! is_array($this->$queueName)) {
+            return false;
+        }
+
+        if (is_null($callback)) {
+            $this->$queueName = []; // 如果传递 null 就清空
+        } elseif (! is_callable($callback)) {
+            return false;
+        }
+
+        if ($prepend) {
+            array_unshift($this->$queueName, $callback);
+        } else {
+            $this->$queueName[] = $callback;
+        }
+
+        return true;
+    }
+
+    protected function beforeMasterExitHandler()
+    {
+        foreach ($this->masterExitCallback as $callback) {
+            is_callable($callback) && call_user_func($callback, $this);
+         }
+    }
+
+    protected function default_sig_handler($sig)
     {
 
     }

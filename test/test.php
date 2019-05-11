@@ -13,6 +13,7 @@ for ($i = 1; $i <= 100; ++$i) {
 }
 
 $producterConsumer->start();
+// 接下来的写的代码不会执行
 
 // 查看运行的进程
 // ps aux | grep test.php
