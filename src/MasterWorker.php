@@ -477,6 +477,7 @@ abstract class MasterWorker
 
         if (is_null($callback)) {
             $this->$queueName = []; // 如果传递 null 就清空
+            return true;
         } elseif (! is_callable($callback)) {
             return false;
         }
