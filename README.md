@@ -88,11 +88,11 @@ Demo: 基于Redis生产消费队列 在 test 目录中
        5
 ```
 
-第一条：`grep test.php` 进程 + Master进程 + 10个Worker(3 个常驻，7个临时) = 12
-第二条：`grep test.php` 进程 + Master进程 + 8个Worker(3 个常驻，5个临时) = 10; 两个空闲的临时 Worker 退出
-第三条：`grep test.php` 进程 + Master进程 + 3个常驻Worker = 5; 所有空闲的临时 Worker 退出
+- 第一条：`grep test.php` 进程 + Master进程 + 10个Worker(3 个常驻，7个临时) = 12
+- 第二条：`grep test.php` 进程 + Master进程 + 8个Worker(3 个常驻，5个临时) = 10; 两个空闲的临时 Worker 退出
+- 第三条：`grep test.php` 进程 + Master进程 + 3个常驻Worker = 5; 所有空闲的临时 Worker 退出
 
-- Ctrl + C 或者 kill Master进程ID
+## Ctrl + C 或者 kill Master进程ID
 
 > 注意是`kill`不是`kill -9`，因为后者是无法捕获的信号，直接强制退出，这会导致Master无法通知子进程退出，Worker将一直运行
 
