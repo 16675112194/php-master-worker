@@ -40,7 +40,7 @@ Demo: 基于Redis生产消费队列 在 test 目录中
 <23574> : 消费结束:79; 剩余个数:37
 ```
 
-- 临时 Worker 消费，空闲自动退出 - Worker进程数可伸缩
+## 临时 Worker 消费，空闲自动退出 - Worker进程数可伸缩
 
 `temporary` 表示临时进程，空闲会自动退出
 
@@ -64,7 +64,7 @@ Demo: 基于Redis生产消费队列 在 test 目录中
 <23576> : 进程退出：23576
 ```
 
-- 3 次消费出现错误自动记录日志
+## 3 次消费出现错误自动记录日志
 
 ```
 =Worker [temporary]==== [2019-05-10 05:51:03]  ===
@@ -75,7 +75,7 @@ Demo: 基于Redis生产消费队列 在 test 目录中
 )
 ```
 
-- 临时Worker进程空闲自动退出
+## 临时Worker进程空闲自动退出
 
 配置最小 常驻 Worker数是3，最大进程数是 10
 
@@ -91,3 +91,27 @@ Demo: 基于Redis生产消费队列 在 test 目录中
 第一条：`grep test.php` 进程 + Master进程 + 10个Worker(3 个常驻，7个临时) = 12
 第二条：`grep test.php` 进程 + Master进程 + 8个Worker(3 个常驻，5个临时) = 10; 两个空闲的临时 Worker 退出
 第三条：`grep test.php` 进程 + Master进程 + 3个常驻Worker = 5; 所有空闲的临时 Worker 退出
+
+- Ctrl + C 或者 kill Master进程ID
+
+> 注意是`kill`不是`kill -9`，因为后者是无法捕获的信号，直接强制退出，这会导致Master无法通知子进程退出，Worker将一直运行
+
+```
+=Worker [permanent]==== [2019-05-12 05:32:07]  ===
+<58543> : 进程退出：58543
+
+=Worker [permanent]==== [2019-05-12 05:32:07]  ===
+<58542> : 进程退出：58542
+
+=Worker [permanent]==== [2019-05-12 05:32:07]  ===
+<58544> : 进程退出：58544
+
+=Master [permanent]==== [2019-05-12 05:32:07]  ===
+<58541> : master 进程退出：58541
+```
+
+`kill Master进程ID`或者`Ctrl + C`后：
+
+1. `Master`陆续通知`Worker`退出
+2. 等待所有`Worker`结束，并且回收资源
+3. `Master`自身退出
