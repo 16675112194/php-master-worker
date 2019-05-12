@@ -11,6 +11,8 @@ class RedisProducterConsumer extends MasterWorker
     
     /**
      * Master 和 Worker 的连接分开,否则会出现问题
+     * 如果使用同一个连接，临时Worker退出是会关闭Redis连接，同时也会关闭Master的连接
+     * Master将出现读取数据错误，新fork的Worker也会使用这个关闭的连接读取数据，后果不堪设想
      * 
      * @var Redis[]
      */
