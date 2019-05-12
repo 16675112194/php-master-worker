@@ -21,15 +21,15 @@ class RedisProducterConsumer extends MasterWorker
         parent::__construct($options);
 
         // 设置退出回调
-        $this->setWorkerExitCallback(function ($worker) {
-            $this->closeRedis();
+        $this->setWorkerExitCallback(function (RedisProducterConsumer $worker) {
+            $worker->closeRedis();
             // 处理结束，把redis关闭
-            $this->log('进程退出：' . posix_getpid());
+            $worker->log('进程退出：' . posix_getpid());
         });
 
-        $this->setMasterExitCallback(function ($master) {
-            $this->closeRedis();
-            $this->log('master 进程退出：' . posix_getpid());
+        $this->setMasterExitCallback(function (RedisProducterConsumer $master) {
+            $master->closeRedis();
+            $master->log('master 进程退出：' . posix_getpid());
         });
     }
 
