@@ -247,14 +247,9 @@ abstract class MasterWorker
                 //echo 'pid:', $pid, "\n";
                 return $pid;
             } else {
-                // 子进程 消费
-                $this->autoQuit = $autoQuit;
-                $this->master = false;
-                // 处理信号
-                pcntl_signal(SIGTERM, [$this, 'child_sig_handler']);
-                pcntl_signal(SIGINT, [$this, 'child_sig_handler']);
-                pcntl_signal(SIGQUIT, [$this, 'child_sig_handler']);
-                exit($this->runChild()); // worker进程结束
+                $this->initWorker($autoQuit);
+
+                exit($this->workerHandler()); // worker进程结束
             }
         } while ($times <= $maxTryTimes);
 
@@ -265,9 +260,28 @@ abstract class MasterWorker
     }
 
     /**
+     * 重新初始化Worker环境参数
+     * 避免Master 与 Worker 共享同一个数据, 比如 网络连接-redis等
+     *
+     * @param bool $autoQuit
+     * @return void
+     */
+    protected function initWorker($autoQuit)
+    {
+        // 子进程 这里需要重新初始化Worker参数
+        $this->autoQuit = $autoQuit;
+        $this->master = false;
+
+        // 处理信号
+        pcntl_signal(SIGTERM, [$this, 'child_sig_handler']);
+        pcntl_signal(SIGINT, [$this, 'child_sig_handler']);
+        pcntl_signal(SIGQUIT, [$this, 'child_sig_handler']);
+    }
+
+    /**
      * 子进程处理内容
      */
-    protected function runChild()
+    protected function workerHandler()
     {
         $noDataLoopTime = 0;
         $status = 0;
