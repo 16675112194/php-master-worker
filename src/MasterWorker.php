@@ -393,6 +393,7 @@ abstract class MasterWorker
             $this->log($msg);
             $this->masterWaitExit(true, $msg);
         } else {
+            $this->log('Worker 出现错误，退出中：' . $exception->getMessage());
             $this->child_sig_handler(SIGTERM);
         }
     }
@@ -516,7 +517,7 @@ abstract class MasterWorker
      */
     protected function initWorker($autoQuit)
     {
-        
+
     }
 
     /**
