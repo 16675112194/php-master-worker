@@ -64,19 +64,6 @@ Demo: 基于Redis生产消费队列 在 test 目录中
 <23576> : 进程退出：23576
 ```
 
-## 3 次消费出现错误自动记录日志
-
-```
-=Worker [temporary]==== [2019-05-10 05:51:03]  ===
-<23583> : array (
-  'data' => NULL,
-  'status' => 0,
-  'errorMsg' => 'RedisException: read error on connection',
-)
-```
-
-## 临时Worker进程空闲自动退出
-
 配置最小 常驻 Worker数是3，最大进程数是 10
 
 ```
@@ -91,6 +78,17 @@ Demo: 基于Redis生产消费队列 在 test 目录中
 - 第一条：`grep test.php` 进程 + Master进程 + 10个Worker(3 个常驻，7个临时) = 12
 - 第二条：`grep test.php` 进程 + Master进程 + 8个Worker(3 个常驻，5个临时) = 10; 两个空闲的临时 Worker 退出
 - 第三条：`grep test.php` 进程 + Master进程 + 3个常驻Worker = 5; 所有空闲的临时 Worker 退出
+
+## 3 次消费出现错误自动记录日志
+
+```
+=Worker [temporary]==== [2019-05-10 05:51:03]  ===
+<23583> : array (
+  'data' => NULL,
+  'status' => 0,
+  'errorMsg' => 'RedisException: read error on connection',
+)
+```
 
 ## Ctrl + C 或者 kill Master进程ID
 
