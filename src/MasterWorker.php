@@ -389,11 +389,11 @@ abstract class MasterWorker
     public function exceptionHandler($exception)
     {
         if ($this->isMaster()) {
-            $msg = '父进程['.posix_getpid().']错误退出中:' . $exception->getMessage();
+            $msg = 'Master进程错误退出中:' . $exception->getMessage();
             $this->log($msg);
             $this->masterWaitExit(true, $msg);
         } else {
-            $this->log('Worker 出现错误，退出中：' . $exception->getMessage());
+            $this->log('Worker进程错误退出中:' . $exception->getMessage());
             $this->child_sig_handler(SIGTERM);
         }
     }
