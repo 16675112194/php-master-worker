@@ -103,9 +103,7 @@ class RedisProducterConsumer extends MasterWorker
 
     public function closeRedis()
     {
-        foreach ($this->redis_connections as $key => $connection) {
-            $connection && $connection->close();
-        }
+        $this->getRedis()->close();
     }
 
     protected function consumeFail($data, \Exception $e)
