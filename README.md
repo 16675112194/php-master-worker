@@ -74,3 +74,20 @@ Demo: 基于Redis生产消费队列 在 test 目录中
   'errorMsg' => 'RedisException: read error on connection',
 )
 ```
+
+- 临时Worker进程空闲自动退出
+
+配置最小 常驻 Worker数是3，最大进程数是 10
+
+```
+> ps aux | grep test.php | wc -l
+      12
+> ps aux | grep test.php | wc -l
+      10
+> ps aux | grep test.php | wc -l
+       5
+```
+
+第一条：`grep test.php` 进程 + Master进程 + 10个Worker(3 个常驻，7个临时) = 12
+第二条：`grep test.php` 进程 + Master进程 + 8个Worker(3 个常驻，5个临时) = 10; 两个空闲的临时 Worker 退出
+第三条：`grep test.php` 进程 + Master进程 + 3个常驻Worker = 5; 所有空闲的临时 Worker 退出
