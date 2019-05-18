@@ -67,8 +67,8 @@ abstract class MasterWorker
         // 父进程异常，需要终止子进程
         set_exception_handler([$this, 'exceptionHandler']);
 
-        // fork minWorkerNum 个子进程
-        $this->mutiForkWorker($this->minWorkerNum);
+        // fork minWorkerNum 个 常驻 Worker 并且延时运行，等到父进程设置好信号回调
+        $this->mutiForkWorker($this->minWorkerNum, false, 100);
 
         if ($this->getWorkerLength() <= 0) {
             $this->masterWaitExit(true, 'fork 子进程全部失败');
@@ -115,10 +115,10 @@ abstract class MasterWorker
         }
     }
 
-    protected function mutiForkWorker($num, $autoQuit = false, $maxTryTimes = 3)
+    protected function mutiForkWorker($num, $autoQuit = false, $maxTryTimes = 3, $delay = 0)
     {
         for ($i = 1; $i <= $num; ++$i) {
-            $this->forkWorker($autoQuit, $maxTryTimes);
+            $this->forkWorker($autoQuit, $maxTryTimes, $delay);
         }
     }
 
@@ -231,7 +231,7 @@ abstract class MasterWorker
         }
     }
 
-    protected function forkWorker($autoQuit = false, $maxTryTimes = 3)
+    protected function forkWorker($autoQuit = false, $maxTryTimes = 3, $delay = 0)
     {
 
         $times = 1;
@@ -244,9 +244,11 @@ abstract class MasterWorker
                 ++$times;
             } elseif($pid) {
                 $this->worker_list[$pid] = true;
-                //echo 'pid:', $pid, "\n";
                 return $pid;
             } else {
+                // 延时运行, 初始Fork Worker 需要先等Master 设置好信号处理回调
+                // 避免Master未设置回调，Worker就异常退出，无法回收资源
+                $this->msleep($delay);
                 // 子进程 这里需要重新初始化Worker参数
                 $this->autoQuit = $autoQuit;
                 $this->master = false;
