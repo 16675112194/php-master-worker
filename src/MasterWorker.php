@@ -68,7 +68,7 @@ abstract class MasterWorker
         set_exception_handler([$this, 'exceptionHandler']);
 
         // fork minWorkerNum 个 常驻 Worker 并且延时运行，等到父进程设置好信号回调
-        $this->mutiForkWorker($this->minWorkerNum, false, 100);
+        $this->mutiForkWorker($this->minWorkerNum, false, 0.1);
 
         if ($this->getWorkerLength() <= 0) {
             $this->masterWaitExit(true, 'fork 子进程全部失败');
