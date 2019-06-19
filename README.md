@@ -92,7 +92,7 @@ Demo: 基于Redis生产消费队列 在 test 目录中
 
 ## Ctrl + C 或者 kill Master进程ID
 
-> 注意是`kill`不是`kill -9`，因为后者是无法捕获的信号，直接强制退出，这会导致Master无法通知子进程退出，Worker将一直运行
+> 注意是`kill`不是`kill -9`，因为后者是无法捕获的信号，直接强制退出，这会导致Master无法通知子进程退出，Worker将一直运行(已经优化，在空闲时检测Master进程退出，如果是孤儿进程，则Worker也退出)
 
 ```
 =Worker [permanent]==== [2019-05-12 05:32:07]  ===
@@ -113,3 +113,7 @@ Demo: 基于Redis生产消费队列 在 test 目录中
 1. `Master`陆续通知`Worker`退出
 2. 等待所有`Worker`结束，并且回收资源
 3. `Master`自身退出
+
+## TODO
+
+1. 处理 Throwable 错误情况 和 set_error_handler 情况
