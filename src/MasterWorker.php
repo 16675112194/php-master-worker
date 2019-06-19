@@ -27,7 +27,8 @@ abstract class MasterWorker
 
     // 通用属性
     protected $stop_service = false;
-    protected $master = true;
+    protected $master_pid = 0; // Master 进程的PID
+    protected $process_pid = 0; // 本进程 PID
 
     // 通用配置
     protected $logFile;
@@ -66,6 +67,8 @@ abstract class MasterWorker
 
         // 父进程异常，需要终止子进程
         set_exception_handler([$this, 'exceptionHandler']);
+
+        $this->master_pid = $this->process_pid = getmypid();
 
         // fork minWorkerNum 个 常驻 Worker 并且延时运行，等到父进程设置好信号回调
         $this->mutiForkWorker($this->minWorkerNum, false, 0.1);
@@ -115,7 +118,7 @@ abstract class MasterWorker
         }
     }
 
-    protected function mutiForkWorker($num, $autoQuit = false, $maxTryTimes = 3, $delay = 0)
+    protected function mutiForkWorker($num, $autoQuit = false, $delay = 0, $maxTryTimes = 3)
     {
         for ($i = 1; $i <= $num; ++$i) {
             $this->forkWorker($autoQuit, $maxTryTimes, $delay);
@@ -163,7 +166,9 @@ abstract class MasterWorker
         return count($this->worker_list);
     }
 
-    //信号处理函数
+    /**
+     * Master 进程信号处理函数
+     */
     public function sig_handler($sig)
     {
         switch ($sig) {
@@ -203,6 +208,9 @@ abstract class MasterWorker
 
     }
 
+    /**
+     * Worker 进程信号处理函数
+     */
     public function child_sig_handler($sig)
     {
         switch ($sig) {
@@ -223,6 +231,9 @@ abstract class MasterWorker
         }
     }
 
+    /**
+     * Master 进程检查退出
+     */
     protected function checkExit($msg = '')
     {
         if ($this->stop_service && empty($this->worker_list)) {
@@ -231,6 +242,9 @@ abstract class MasterWorker
         }
     }
 
+    /**
+     * Fork Worker 进程
+     */
     protected function forkWorker($autoQuit = false, $maxTryTimes = 3, $delay = 0)
     {
 
@@ -251,7 +265,7 @@ abstract class MasterWorker
                 $this->msleep($delay);
                 // 子进程 这里需要重新初始化Worker参数
                 $this->autoQuit = $autoQuit;
-                $this->master = false;
+                $this->process_pid = getmypid();
 
                 // 处理信号
                 pcntl_signal(SIGTERM, [$this, 'child_sig_handler']);
@@ -271,7 +285,21 @@ abstract class MasterWorker
     }
 
     /**
-     * 子进程处理内容
+     * 判断Master 进程是否退出
+     */
+    protected function masterIsExited()
+    {
+        if ($this->isMaster()) {
+            // Master 检查自己是否退出，说明没有退出
+            return false;
+        } else {
+            // master 进程PID 不是 Worker 的父进程 PID 说明：Worker 进程成为孤儿进程，被 init 进程接管(PID = 0)
+            return $this->master_pid !== posix_getppid();
+        }
+    }
+
+    /**
+     * 子进程处理 Handler
      */
     protected function workerHandler()
     {
@@ -281,6 +309,12 @@ abstract class MasterWorker
 
             // 处理退出
             if ($this->stop_service) {
+                break;
+            }
+
+            // 如果空闲， 那么常驻进程 需要检查父进程是否已经挂掉
+            if (($noDataLoopTime > $this->waitTaskLoopTimes) && $this->masterIsExited()) {
+                // 如果 Master 已经挂掉，那么 Worker 也退出
                 break;
             }
 
@@ -294,8 +328,8 @@ abstract class MasterWorker
                     $this->status = self::WORKER_STATUS_FINISHED;
                 } else {
                     $this->status = self::WORKER_STATUS_IDLE;
-                    // 避免溢出
-                    $noDataLoopTime = $noDataLoopTime >= PHP_INT_MAX ? PHP_INT_MAX : ($noDataLoopTime + 1);
+                    // 避免溢出 最大值只有 (PHP_INT_MAX - 1)
+                    $noDataLoopTime = min(PHP_INT_MAX - 1, $noDataLoopTime + 1);
                     // 等待队列
                     $this->msleep($this->waitTaskTime);
                 }
@@ -366,7 +400,7 @@ abstract class MasterWorker
                 $trace_list .= "-- " . $_line ['file'] . "[" . $_line ['line'] . "] : " . $_line ['function'] . "()" . "\r\n";
             }
         }
-        $text = "\r\n=" . $header . "==== " . strftime("[%Y-%m-%d %H:%M:%S] ") . " ===\r\n<" . getmypid() . "> : " . $text . "\r\n" . $trace_list;
+        $text = "\r\n=" . $header . "==== " . strftime("[%Y-%m-%d %H:%M:%S] ") . " ===\r\n<" . $this->process_pid . "> : " . $text . "\r\n" . $trace_list;
         $h = fopen($filename, 'a');
         if (! $h) {
             throw new \Exception('Could not open logfile:' . $filename);
@@ -388,6 +422,9 @@ abstract class MasterWorker
         usleep($time * 1000000);
     }
 
+    /**
+     * 异常处理
+     */
     public function exceptionHandler($exception)
     {
         if ($this->isMaster()) {
@@ -400,9 +437,12 @@ abstract class MasterWorker
         }
     }
 
+    /**
+     * 是否 Master 进程
+     */
     public function isMaster()
     {
-        return $this->master;
+        return $this->master_pid === $this->process_pid;
     }
 
     /**
