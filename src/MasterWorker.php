@@ -65,28 +65,35 @@ abstract class MasterWorker
     public function start()
     {
 
-        // 父进程异常，需要终止子进程
-        set_exception_handler([$this, 'exceptionHandler']);
+        try {
+            $this->master_pid = $this->process_pid = getmypid();
 
-        $this->master_pid = $this->process_pid = getmypid();
-
-        // fork minWorkerNum 个 常驻 Worker 并且延时运行，等到父进程设置好信号回调
-        $this->mutiForkWorker($this->minWorkerNum, false, 0.1);
-
-        if ($this->getWorkerLength() <= 0) {
-            $this->masterWaitExit(true, 'fork 子进程全部失败');
+            // fork minWorkerNum 个 常驻 Worker 并且延时运行，等到父进程设置好信号回调
+            $this->mutiForkWorker($this->minWorkerNum, false);
+    
+            if ($this->getWorkerLength() <= 0) {
+                $this->masterExit('fork 子进程全部失败');
+            }
+    
+            // 父进程监听信号
+            pcntl_signal(SIGTERM, [$this, 'sig_handler']);
+            pcntl_signal(SIGINT, [$this, 'sig_handler']);
+            pcntl_signal(SIGQUIT, [$this, 'sig_handler']);
+            pcntl_signal(SIGCHLD, [$this, 'sig_handler']);
+    
+            // 监听队列，队列比进程数多很多，则扩大进程，扩大部分的进程会空闲自动退出
+            
+            $this->checkWorkerLength();
+    
+            $this->masterExit();
+        } catch (\Exception $e) {
+            // 父进程异常退出需要通知子进程退出
+            $this->exceptionHandler($e);
+            exit(1);
         }
 
-        // 父进程监听信号
-        pcntl_signal(SIGTERM, [$this, 'sig_handler']);
-        pcntl_signal(SIGINT, [$this, 'sig_handler']);
-        pcntl_signal(SIGQUIT, [$this, 'sig_handler']);
-        pcntl_signal(SIGCHLD, [$this, 'sig_handler']);
-
-        // 监听队列，队列比进程数多很多，则扩大进程，扩大部分的进程会空闲自动退出
-        $this->checkWorkerLength();
-
-        $this->masterWaitExit();
+        // 避免执行之后的代码
+        exit(0);
     }
 
     /**
@@ -96,26 +103,22 @@ abstract class MasterWorker
      * @param string $msg 退出 message
      * @return void
      */
-    protected function masterWaitExit($force = false, $msg = '')
+    protected function masterExit($msg = '')
     {
-        // 强制发送退出信号
-        $force && $this->sig_handler(SIGTERM);
+        // 发送退出信号
+        $this->sig_handler(SIGTERM);
 
-        // 等到子进程退出
-        while ($this->stop_service) {
-            $this->checkExit($msg);
-            $this->msleep($this->check_internal);
-        }
+        // 发送信号后 直接退出，因为子进程会在空闲检测父进程是否退出,如果父进程退出，子进程也会退出
+        // 如果Master使用信号等待所有子进程退出，可能会漏掉一些信号，导致父进程一直等待漏掉的信号
+        // 因此最好的回收方式是，父进程直接退出，让init进程接管回收
+        $this->checkExit($msg);
     }
 
     protected function log($msg)
     {
-        try {
-            $header = $this->isMaster() ? 'Master [permanent]' : sprintf('Worker [%s]', $this->autoQuit ? 'temporary' : 'permanent');
-            $this->writeLog($msg, $this->getLogFile(), $header);
-        } catch (\Exception $e) {
-            
-        }
+        $header = $this->isMaster() ? 'Master [permanent]' : sprintf('Worker [%s]', $this->autoQuit ? 'temporary' : 'permanent');
+        
+        $this->writeLog($msg, $this->getLogFile(), $header);
     }
 
     protected function mutiForkWorker($num, $autoQuit = false, $delay = 0, $maxTryTimes = 3)
@@ -184,28 +187,37 @@ abstract class MasterWorker
                 foreach ($this->worker_list as $pid => $v) {
                     posix_kill($pid, SIGTERM);
                 }
-
+                
                 break;
             case SIGCHLD:
                 // 子进程退出, 回收子进程, 并且判断程序是否需要退出
-                while (($pid = pcntl_waitpid(-1, $status, WNOHANG)) > 0) {
-                    // 去除子进程
-                    unset($this->worker_list[$pid]);
-
-                    // 子进程是否正常退出
-                    // if (pcntl_wifexited($status)) {
-                    //     //
-                    // }
+                while ($this->waitWorker(-1)) {
                 }
 
                 $this->checkExit();
-
                 break;
             default:
                 $this->default_sig_handler($sig);
                 break;
         }
 
+    }
+
+    protected function waitWorker($pid)
+    {
+        // 子进程退出, 回收子进程, 并且判断程序是否需要退出
+
+        $result = ($result_pid = pcntl_waitpid($pid, $status, WNOHANG)) > 0;
+
+        if ($result) {
+            unset($this->worker_list[$result_pid]);
+            // 子进程是否正常退出
+            // if (pcntl_wifexited($status)) {
+            //     //
+            // }
+        }
+
+        return $result;
     }
 
     /**
@@ -217,6 +229,7 @@ abstract class MasterWorker
             case SIGINT:
             case SIGQUIT:
             case SIGTERM:
+                $this->log('接收到结束信号, 开始退出');
                 $this->stop_service = true;
                 break;
             // 操作比较危险 在处理任务当初强制终止
@@ -236,9 +249,9 @@ abstract class MasterWorker
      */
     protected function checkExit($msg = '')
     {
-        if ($this->stop_service && empty($this->worker_list)) {
+        if ($this->stop_service) {
             $this->beforeMasterExitHandler();
-            die($msg ?:'Master 进程结束, Worker 进程全部退出');
+            die($msg ?:'Master 进程结束, 正在运行的Worker进程数：' . $this->getWorkerLength());
         }
     }
 
@@ -260,21 +273,32 @@ abstract class MasterWorker
                 $this->worker_list[$pid] = true;
                 return $pid;
             } else {
-                // 延时运行, 初始Fork Worker 需要先等Master 设置好信号处理回调
-                // 避免Master未设置回调，Worker就异常退出，无法回收资源
-                $this->msleep($delay);
-                // 子进程 这里需要重新初始化Worker参数
-                $this->autoQuit = $autoQuit;
-                $this->process_pid = getmypid();
+                try {
+                    // 延时运行, 初始Fork Worker 需要先等Master 设置好信号处理回调
+                    // 避免Master未设置回调，Worker就异常退出，无法回收资源
+                    $this->msleep($delay);
+                    // 子进程 这里需要重新初始化Worker参数
+                    $this->autoQuit = $autoQuit;
+                    $this->process_pid = getmypid();
 
-                // 处理信号
-                pcntl_signal(SIGTERM, [$this, 'child_sig_handler']);
-                pcntl_signal(SIGINT, [$this, 'child_sig_handler']);
-                pcntl_signal(SIGQUIT, [$this, 'child_sig_handler']);
+                    // 处理信号
+                    pcntl_signal(SIGTERM, [$this, 'child_sig_handler']);
+                    pcntl_signal(SIGINT, [$this, 'child_sig_handler']);
+                    pcntl_signal(SIGQUIT, [$this, 'child_sig_handler']);
 
-                // 自定义Worker初始化
-                $this->initWorker();
-                exit($this->workerHandler()); // worker进程结束
+                    // 自定义Worker初始化
+                    $this->initWorker();
+                    //throw new Exception('ddd');
+                    $status = $this->workerHandler();
+                
+                    $this->beforeWorkerExitHandler();
+                    
+                    exit($status); // worker进程结束
+
+                } catch (\Exception $e) {
+                    $this->beforeWorkerExitHandler();
+                    exit(1);
+                }
             }
         } while ($times <= $maxTryTimes);
 
@@ -347,9 +371,6 @@ abstract class MasterWorker
             }
         }
 
-        $this->beforeWorkerExitHandler();
-        $this->status = self::WORKER_STATUS_EXITING;
-
         return $status;
     }
 
@@ -419,6 +440,9 @@ abstract class MasterWorker
 
     protected function msleep($time)
     {
+        if ($time <= 0) {
+            return;
+        }
         usleep($time * 1000000);
     }
 
@@ -430,7 +454,7 @@ abstract class MasterWorker
         if ($this->isMaster()) {
             $msg = 'Master进程错误退出中:' . $exception->getMessage();
             $this->log($msg);
-            $this->masterWaitExit(true, $msg);
+            $this->masterExit($msg);
         } else {
             $this->log('Worker进程错误退出中:' . $exception->getMessage());
             $this->child_sig_handler(SIGTERM);
@@ -487,6 +511,7 @@ abstract class MasterWorker
 
      protected function beforeWorkerExitHandler()
      {
+        $this->status = self::WORKER_STATUS_EXITING;
          foreach ($this->workerExitCallback as $callback) {
             is_callable($callback) && call_user_func($callback, $this);
          }
@@ -536,6 +561,15 @@ abstract class MasterWorker
         }
 
         return true;
+    }
+
+    public function getMyPid()
+    {
+        if (! $this->process_pid) {
+            $this->process_pid = getmypid();
+        }
+
+        return $this->process_pid;
     }
 
     protected function beforeMasterExitHandler()

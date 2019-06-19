@@ -26,12 +26,12 @@ class RedisProducterConsumer extends MasterWorker
         $this->setWorkerExitCallback(function (RedisProducterConsumer $worker) {
             $worker->closeRedis();
             // 处理结束，把redis关闭
-            $worker->log('进程退出：' . posix_getpid());
+            $worker->log('进程退出：' . $worker->getMyPid());
         });
 
         $this->setMasterExitCallback(function (RedisProducterConsumer $master) {
             $master->closeRedis();
-            $master->log('master 进程退出：' . posix_getpid());
+            $master->log('master 进程退出：' . $master->getMyPid());
         });
     }
 
@@ -76,7 +76,7 @@ class RedisProducterConsumer extends MasterWorker
 
         $this->log('消费中 ' . $data);
 
-        $this->msleep(1);
+        $this->msleep(0.1);
 
         $this->log('消费结束:' . $data . '; 剩余个数:' . $this->getTaskLength());
 
