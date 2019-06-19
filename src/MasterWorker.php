@@ -557,7 +557,7 @@ abstract class MasterWorker
      * @param bool $autoQuit
      * @return void
      */
-    protected function initWorker($autoQuit)
+    protected function initWorker()
     {
 
     }
