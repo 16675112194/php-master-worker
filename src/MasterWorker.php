@@ -290,15 +290,14 @@ abstract class MasterWorker
                     $this->initWorker();
                     //throw new Exception('ddd');
                     $status = $this->workerHandler();
-                
-                    $this->beforeWorkerExitHandler();
-                    
-                    exit($status); // worker进程结束
 
                 } catch (\Exception $e) {
                     $this->beforeWorkerExitHandler();
                     exit(1);
                 }
+
+                $this->beforeWorkerExitHandler();
+                exit($status); // worker进程结束
             }
         } while ($times <= $maxTryTimes);
 
