@@ -66,7 +66,7 @@ abstract class MasterWorker
     {
 
         // 设置异常退出
-        set_error_handler([$this, 'exceptionHandler']);
+        set_exception_handler([$this, 'exceptionHandler']);
 
         $this->master_pid = $this->process_pid = getmypid();
 
