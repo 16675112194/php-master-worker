@@ -65,35 +65,32 @@ abstract class MasterWorker
     public function start()
     {
 
-        try {
-            $this->master_pid = $this->process_pid = getmypid();
+        // 设置异常退出
+        set_error_handler([$this, 'exceptionHandler']);
 
-            // fork minWorkerNum 个 常驻 Worker 并且延时运行，等到父进程设置好信号回调
-            $this->mutiForkWorker($this->minWorkerNum, false);
-    
-            if ($this->getWorkerLength() <= 0) {
-                $this->masterExit('fork 子进程全部失败');
-            }
-    
-            // 父进程监听信号
-            pcntl_signal(SIGTERM, [$this, 'sig_handler']);
-            pcntl_signal(SIGINT, [$this, 'sig_handler']);
-            pcntl_signal(SIGQUIT, [$this, 'sig_handler']);
-            pcntl_signal(SIGCHLD, [$this, 'sig_handler']);
-    
-            // 监听队列，队列比进程数多很多，则扩大进程，扩大部分的进程会空闲自动退出
-            
-            $this->checkWorkerLength();
-    
-            $this->masterExit();
-        } catch (\Exception $e) {
-            // 父进程异常退出需要通知子进程退出
-            $this->exceptionHandler($e);
-            exit(1);
+        $this->master_pid = $this->process_pid = getmypid();
+
+        // fork minWorkerNum 个 常驻 Worker 并且延时运行，等到父进程设置好信号回调
+        $this->mutiForkWorker($this->minWorkerNum, false);
+
+        if ($this->getWorkerLength() <= 0) {
+            $this->masterExit('fork 子进程全部失败');
         }
 
+        // 父进程监听信号
+        pcntl_signal(SIGTERM, [$this, 'sig_handler']);
+        pcntl_signal(SIGINT, [$this, 'sig_handler']);
+        pcntl_signal(SIGQUIT, [$this, 'sig_handler']);
+        pcntl_signal(SIGCHLD, [$this, 'sig_handler']);
+
+        // 监听队列，队列比进程数多很多，则扩大进程，扩大部分的进程会空闲自动退出
+        
+        $this->checkWorkerLength();
+
+        $this->masterExit();
+
         // 避免执行之后的代码
-        exit(0);
+        exit(1);
     }
 
     /**
@@ -273,29 +270,22 @@ abstract class MasterWorker
                 $this->worker_list[$pid] = true;
                 return $pid;
             } else {
-                try {
-                    // 延时运行, 初始Fork Worker 需要先等Master 设置好信号处理回调
-                    // 避免Master未设置回调，Worker就异常退出，无法回收资源
-                    $this->msleep($delay);
-                    // 子进程 这里需要重新初始化Worker参数
-                    $this->autoQuit = $autoQuit;
-                    $this->process_pid = getmypid();
+                // 延时运行, 初始Fork Worker 需要先等Master 设置好信号处理回调
+                // 避免Master未设置回调，Worker就异常退出，无法回收资源
+                $this->msleep($delay);
+                // 子进程 这里需要重新初始化Worker参数
+                $this->autoQuit = $autoQuit;
+                $this->process_pid = getmypid();
 
-                    // 处理信号
-                    pcntl_signal(SIGTERM, [$this, 'child_sig_handler']);
-                    pcntl_signal(SIGINT, [$this, 'child_sig_handler']);
-                    pcntl_signal(SIGQUIT, [$this, 'child_sig_handler']);
+                // 处理信号
+                pcntl_signal(SIGTERM, [$this, 'child_sig_handler']);
+                pcntl_signal(SIGINT, [$this, 'child_sig_handler']);
+                pcntl_signal(SIGQUIT, [$this, 'child_sig_handler']);
 
-                    // 自定义Worker初始化
-                    $this->initWorker();
-                    //throw new Exception('ddd');
-                    $status = $this->workerHandler();
-
-                } catch (\Exception $e) {
-                    $this->beforeWorkerExitHandler();
-                    exit(1);
-                }
-
+                // 自定义Worker初始化
+                $this->initWorker();
+                //throw new Exception('ddd');
+                $status = $this->workerHandler();
                 $this->beforeWorkerExitHandler();
                 exit($status); // worker进程结束
             }
@@ -448,15 +438,16 @@ abstract class MasterWorker
     /**
      * 异常处理
      */
-    public function exceptionHandler($exception)
+    public function exceptionHandler(\Exception $exception)
     {
         if ($this->isMaster()) {
-            $msg = 'Master进程错误退出中:' . $exception->getMessage();
+            $msg = 'Master进程错误退出中:' . $exception->getMessage() . '; trace: ' . $exception->getTraceAsString();
             $this->log($msg);
             $this->masterExit($msg);
         } else {
-            $this->log('Worker进程错误退出中:' . $exception->getMessage());
-            $this->child_sig_handler(SIGTERM);
+            $this->log('Worker进程错误退出中:' . $exception->getMessage()). '; trace: ' . $exception->getTraceAsString();
+            $this->beforeWorkerExitHandler();
+            exit(1); // worker进程结束
         }
     }
 
